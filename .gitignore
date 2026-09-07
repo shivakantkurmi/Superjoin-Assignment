@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 .env
 data/
+starter-datasets/
 dist/
 *.egg-info/
