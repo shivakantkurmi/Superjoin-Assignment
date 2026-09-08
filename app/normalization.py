@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
+from .models import Fact
+
 
 _SCALE = {
     "thousand": Decimal("1000"),
@@ -47,3 +49,15 @@ def normalize_period(label: str) -> dict[str, str | None]:
     match = re.search(r"(?:fy\s*)?(20\d{2})", original.casefold())
     year = match.group(1) if match else None
     return {"label": original, "year": year}
+
+
+def normalize_fact(fact: Fact) -> Fact:
+    """Fill deterministic numeric and text normalizations without changing source values."""
+    if isinstance(fact.value, str):
+        fact.normalized_value = normalize_number(fact.value, fact.unit)
+    fact.subject = canonical_text(fact.subject)
+    fact.predicate = canonical_text(fact.predicate)
+    label = fact.time.get("label") if fact.time else None
+    if label:
+        fact.time = normalize_period(label)
+    return fact
