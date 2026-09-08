@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..ingestion import verify_evidence
 from ..models import Evidence, Fact, Page
-from .gemini_client import GeminiClient, GeminiResponseError
+from .gemini_client import GeminiClient, GeminiConfigurationError, GeminiResponseError
 
 
 class ExtractedEvidence(BaseModel):
@@ -54,7 +54,7 @@ class FactExtractor:
         try:
             data = self.client.generate_json(prompt, ExtractionPayload)
             payload = ExtractionPayload.model_validate(data)
-        except (ValidationError, GeminiResponseError) as exc:
+        except (ValidationError, GeminiConfigurationError, GeminiResponseError) as exc:
             return [], [ExtractionFailure(str(exc), page.page_number)]
 
         facts: list[Fact] = []

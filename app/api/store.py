@@ -11,6 +11,7 @@ class MemoryStore:
         self.pages: dict[str, list[dict[str, Any]]] = {}
         self.facts: list[dict[str, Any]] = []
         self.relationships: list[dict[str, Any]] = []
+        self.errors: list[dict[str, Any]] = []
 
     def add_document(self, document: dict[str, Any], pages: list[dict[str, Any]]) -> None:
         self.documents[document["id"]] = document
@@ -28,6 +29,10 @@ class MemoryStore:
         self.documents[document_id]["facts_count"] = len(facts)
         self.documents[document_id]["relationships_count"] = len(relationships)
         self.documents[document_id]["status"] = status
+
+    def add_processing_error(self, document_id: str, message: str) -> None:
+        self.documents[document_id]["status"] = "FAILED"
+        self.errors.append({"document_id": document_id, "message": message})
 
     def knowledge_layer(self) -> dict[str, Any]:
         return {

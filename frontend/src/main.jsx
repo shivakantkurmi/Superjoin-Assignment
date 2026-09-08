@@ -14,17 +14,19 @@ function App() {
   const [documents, setDocuments] = useState([]);
   const [facts, setFacts] = useState([]);
   const [relationships, setRelationships] = useState([]);
+  const [processingErrors, setProcessingErrors] = useState([]);
   const [selectedFact, setSelectedFact] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   async function refresh() {
-    const [nextDocuments, nextFacts, nextRelationships] = await Promise.all([
-      request("/documents"), request("/facts"), request("/relationships")
+    const [nextDocuments, nextFacts, nextRelationships, nextErrors] = await Promise.all([
+      request("/documents"), request("/facts"), request("/relationships"), request("/processing-errors")
     ]);
     setDocuments(nextDocuments);
     setFacts(nextFacts);
     setRelationships(nextRelationships);
+    setProcessingErrors(nextErrors);
   }
 
   useEffect(() => { refresh().catch((error) => setMessage(error.message)); }, []);
@@ -68,6 +70,7 @@ function App() {
         {relationships.length === 0 ? <Empty text="Related facts will appear here after comparison." /> : <div className="relationship-list">{relationships.map((item, index) => <article className="relationship" key={item.id || index}><Status value={item.relationship_type} /><p>{item.explanation}</p><small>Confidence {Math.round((item.confidence || 0) * 100)}%</small></article>)}</div>}
       </div>
     </section>
+    {processingErrors.length > 0 && <section className="panel processing-notes"><div className="panel-heading"><h2>Processing notes</h2><span>{processingErrors.length} reported</span></div><div className="relationship-list">{processingErrors.map((item, index) => <article className="relationship" key={`${item.document_id}-${index}`}><Status value="EVIDENCE_FAILED" /><p>{item.message}</p><small>Document {item.document_id}</small></article>)}</div></section>}
     {selectedFact && <aside className="evidence"><button className="close" onClick={() => setSelectedFact(null)}>CLOSE</button><p className="kicker">SOURCE EVIDENCE</p><h2>{selectedFact.subject}</h2><p className="predicate">{selectedFact.predicate}</p><div className="quote">"{selectedFact.evidence?.quote || "Evidence is unavailable."}"</div><dl><dt>Document</dt><dd>{selectedFact.evidence?.document_id || "-"}</dd><dt>Page</dt><dd>{selectedFact.evidence?.page_number || "-"}</dd><dt>Verification</dt><dd>{selectedFact.status}</dd></dl></aside>}
   </main>;
 }

@@ -11,21 +11,44 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.store import MemoryStore
+from .db.repository import SupabaseRepository
+from .db.writer import SupabaseWriter
 from .ingestion import ExtractionError, extract_pages
+from .llm.fact_extractor import FactExtractor
+from .llm.gemini_client import GeminiClient
 from .pipeline import ProcessingPipeline, fact_to_dict
+from .retrieval.embeddings import FactEmbedder, VectorIndex
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+
+def cors_origins() -> list[str]:
+    configured = os.getenv("FRONTEND_ORIGINS", "")
+    origins = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    return origins or ["http://localhost:5173"]
+
+
+def build_default_pipeline() -> ProcessingPipeline:
+    return ProcessingPipeline(
+        extractor=FactExtractor(GeminiClient()),
+        vector_index=VectorIndex(FactEmbedder()),
+    )
 
 
 def create_app(store: MemoryStore | None = None, pipeline: ProcessingPipeline | None = None) -> FastAPI:
     app = FastAPI(title="Fact Knowledge Layer", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=cors_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.store = store or MemoryStore()
+    app.state.writer = None
+    if os.getenv("SUPABASE_DB_URL"):
+        app.state.writer = SupabaseWriter(SupabaseRepository())
+    # Explicit stores are used by fast API tests; the real default app processes uploads.
+    app.state.pipeline = pipeline if pipeline is not None else (build_default_pipeline() if store is None else None)
 
     @app.post("/documents/upload", status_code=202)
     async def upload_document(file: UploadFile = File(...)):
@@ -73,8 +96,12 @@ def create_app(store: MemoryStore | None = None, pipeline: ProcessingPipeline | 
             for page in pages
         ]
         app.state.store.add_document(document, page_rows)
-        if pipeline is not None:
-            result = pipeline.process(pages)
+        if app.state.pipeline is not None:
+            try:
+                result = app.state.pipeline.process(pages)
+            except Exception as exc:
+                app.state.store.add_processing_error(document_id, str(exc))
+                raise HTTPException(status_code=502, detail=f"Document processing failed: {exc}") from exc
             relationship_rows = [
                 {
                     "fact_a_id": fact_a_id,
@@ -92,7 +119,14 @@ def create_app(store: MemoryStore | None = None, pipeline: ProcessingPipeline | 
                 relationship_rows,
                 "COMPLETED" if not result.failures else "COMPLETED_WITH_ERRORS",
             )
-        return document
+            for failure in result.failures:
+                app.state.store.add_processing_error(document_id, f"{failure.stage}: {failure.message}")
+            if app.state.writer is not None:
+                try:
+                    app.state.writer.persist(document, pages, result)
+                except Exception as exc:
+                    app.state.store.add_processing_error(document_id, f"supabase_persistence: {exc}")
+        return app.state.store.documents[document_id]
 
     @app.get("/documents")
     def list_documents():
@@ -136,6 +170,10 @@ def create_app(store: MemoryStore | None = None, pipeline: ProcessingPipeline | 
     @app.get("/knowledge-layer")
     def knowledge_layer():
         return app.state.store.knowledge_layer()
+
+    @app.get("/processing-errors")
+    def processing_errors():
+        return app.state.store.errors
 
     @app.get("/processing/{document_id}")
     def processing_status(document_id: str):
