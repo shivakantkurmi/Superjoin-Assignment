@@ -16,6 +16,19 @@ class MemoryStore:
         self.documents[document["id"]] = document
         self.pages[document["id"]] = pages
 
+    def add_processing_result(
+        self,
+        document_id: str,
+        facts: list[dict[str, Any]],
+        relationships: list[dict[str, Any]],
+        status: str,
+    ) -> None:
+        self.facts.extend(facts)
+        self.relationships.extend(relationships)
+        self.documents[document_id]["facts_count"] = len(facts)
+        self.documents[document_id]["relationships_count"] = len(relationships)
+        self.documents[document_id]["status"] = status
+
     def knowledge_layer(self) -> dict[str, Any]:
         return {
             "documents": list(self.documents.values()),

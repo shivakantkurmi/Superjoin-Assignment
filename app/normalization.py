@@ -25,7 +25,10 @@ def normalize_number(raw: str, unit: str | None = None) -> Decimal | None:
     if not raw:
         return None
     cleaned = raw.replace(",", "").strip().lower()
-    match = re.fullmatch(r"(?:[₹$€£]\s*)?([-+]?\d+(?:\.\d+)?)\s*([a-z]+)?", cleaned)
+    match = re.fullmatch(
+        r"(?:(?:inr|usd|eur|gbp)\s*)?(?:[₹$€£]\s*)?([-+]?\d+(?:\.\d+)?)\s*([a-z]+)?",
+        cleaned,
+    )
     if not match:
         return None
     try:

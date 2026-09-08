@@ -11,11 +11,12 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from .api.store import MemoryStore
 from .ingestion import ExtractionError, extract_pages
+from .pipeline import ProcessingPipeline, fact_to_dict
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
-def create_app(store: MemoryStore | None = None) -> FastAPI:
+def create_app(store: MemoryStore | None = None, pipeline: ProcessingPipeline | None = None) -> FastAPI:
     app = FastAPI(title="Fact Knowledge Layer", version="0.1.0")
     app.state.store = store or MemoryStore()
 
@@ -65,6 +66,25 @@ def create_app(store: MemoryStore | None = None) -> FastAPI:
             for page in pages
         ]
         app.state.store.add_document(document, page_rows)
+        if pipeline is not None:
+            result = pipeline.process(pages)
+            relationship_rows = [
+                {
+                    "fact_a_id": fact_a_id,
+                    "fact_b_id": fact_b_id,
+                    "relationship_type": relationship.relationship_type.value,
+                    "confidence": relationship.confidence,
+                    "explanation": relationship.explanation,
+                    "factors": list(relationship.factors),
+                }
+                for fact_a_id, fact_b_id, relationship in result.relationships
+            ]
+            app.state.store.add_processing_result(
+                document_id,
+                [fact_to_dict(fact) | {"document_id": document_id} for fact in result.facts],
+                relationship_rows,
+                "COMPLETED" if not result.failures else "COMPLETED_WITH_ERRORS",
+            )
         return document
 
     @app.get("/documents")
