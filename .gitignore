@@ -7,3 +7,5 @@ data/
 starter-datasets/
 dist/
 *.egg-info/
+frontend/node_modules/
+frontend/dist/
