@@ -134,19 +134,4 @@ Next steps include OCR and table extraction, hybrid lexical plus semantic retrie
 - API: FastAPI
 - UI: React and Vite
 
-The starter PDFs supplied for evaluation are private local fixtures and are excluded from Git. The repository contains no API keys or credentials. Gemini and Supabase integrations are isolated and mockable so deterministic tests do not require paid services.
 
-Offline sample validation is available without any account or API key:
-
-```text
-21 passed
-Frontend production build: passed
-Evidence verification: grounded quote -> VALID
-Evidence verification: missing quote -> EVIDENCE_FAILED
-Same normalized value and context -> CORROBORATES
-Different value with same context -> CONTRADICTS
-Different reporting period -> RECONCILES
-Invalid Gemini relationship output -> AMBIGUOUS
-```
-
-The live Gemini and Supabase paths require the evaluator's own configuration in `.env`; those credentials are never committed.
