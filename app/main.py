@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 from .api.store import MemoryStore
 from .ingestion import ExtractionError, extract_pages
@@ -18,6 +19,12 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 def create_app(store: MemoryStore | None = None, pipeline: ProcessingPipeline | None = None) -> FastAPI:
     app = FastAPI(title="Fact Knowledge Layer", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.store = store or MemoryStore()
 
     @app.post("/documents/upload", status_code=202)
