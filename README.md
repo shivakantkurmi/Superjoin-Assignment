@@ -50,19 +50,7 @@ Open `http://localhost:5173`. Use the upload control to send a new PDF to `POST 
 
 ## Video Demo
 
-Video demo link: TODO: upload a final demo video of three minutes or less.
 
-The video should use locally available PDFs and show one upload, processing, a grounded fact with its page evidence, corroboration, contradiction, contextual reconciliation, and one surfaced failure. No account credentials should appear in the recording.
-
-Recommended three-minute sequence:
-
-- 0:00–0:20: Upload PDFs
-- 0:20–0:50: Show processing and extracted facts
-- 0:50–1:20: Show corroboration
-- 1:20–1:50: Show contradiction
-- 1:50–2:20: Show contextual reconciliation
-- 2:20–2:45: Show a surfaced failure
-- 2:45–3:00: Explain the architecture and close
 
 ## Approach
 
