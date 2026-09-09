@@ -20,7 +20,7 @@ create table if not exists pages (
 );
 
 create table if not exists chunks (
-    id uuid primary key default gen_random_uuid(),
+    id text primary key,
     document_id uuid not null references documents(id) on delete cascade,
     page_id uuid not null references pages(id) on delete cascade,
     chunk_index integer not null,
@@ -55,6 +55,7 @@ create table if not exists evidence (
     fact_id uuid not null references facts(id) on delete cascade,
     document_id uuid not null references documents(id) on delete cascade,
     page_id uuid not null references pages(id) on delete cascade,
+    chunk_id text,
     quote text not null,
     char_start integer,
     char_end integer,

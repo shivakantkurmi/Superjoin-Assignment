@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion import verify_evidence
 from ..models import Evidence, Fact, Page
@@ -33,9 +33,48 @@ class ExtractedFact(BaseModel):
     ambiguous: bool = False
     evidence: ExtractedEvidence
 
+    @field_validator("qualifiers", mode="before")
+    @classmethod
+    def qualifiers_from_gemini(cls, value: Any) -> dict[str, Any]:
+        if isinstance(value, list):
+            return {item["key"]: item.get("value") for item in value if isinstance(item, dict) and "key" in item}
+        return value or {}
+
 
 class ExtractionPayload(BaseModel):
     facts: list[ExtractedFact] = Field(default_factory=list)
+
+
+GEMINI_EXTRACTION_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "facts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "subject": {"type": "STRING"},
+                    "predicate": {"type": "STRING"},
+                    "object_value": {"type": "STRING"},
+                    "fact_type": {"type": "STRING"},
+                    "original_value": {"type": "STRING"},
+                    "normalized_value": {"type": "STRING"},
+                    "unit": {"type": "STRING"},
+                    "currency": {"type": "STRING"},
+                    "time": {"type": "OBJECT", "properties": {"start": {"type": "STRING"}, "end": {"type": "STRING"}, "label": {"type": "STRING"}}, "required": ["label"]},
+                    "scope": {"type": "STRING"},
+                    "location": {"type": "STRING"},
+                    "qualifiers": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"key": {"type": "STRING"}, "value": {"type": "STRING"}}, "required": ["key", "value"]}},
+                    "confidence": {"type": "NUMBER"},
+                    "ambiguous": {"type": "BOOLEAN"},
+                    "evidence": {"type": "OBJECT", "properties": {"quote": {"type": "STRING"}, "page": {"type": "INTEGER"}}, "required": ["quote", "page"]},
+                },
+                "required": ["subject", "predicate", "fact_type", "confidence", "evidence"],
+            },
+        }
+    },
+    "required": ["facts"],
+}
 
 
 @dataclass(frozen=True)
@@ -52,7 +91,7 @@ class FactExtractor:
     def extract_page(self, page: Page) -> tuple[list[Fact], list[ExtractionFailure]]:
         prompt = self._prompt(page)
         try:
-            data = self.client.generate_json(prompt, ExtractionPayload)
+            data = self.client.generate_json(prompt, GEMINI_EXTRACTION_SCHEMA)
             payload = ExtractionPayload.model_validate(data)
         except (ValidationError, GeminiConfigurationError, GeminiResponseError) as exc:
             return [], [ExtractionFailure(str(exc), page.page_number)]

@@ -25,7 +25,7 @@ class RelationshipResult:
 
 def compare_facts(first: Any, second: Any) -> RelationshipResult:
     """Compare facts when deterministic fields are sufficient; otherwise stay ambiguous."""
-    if canonical_text(first.subject) != canonical_text(second.subject):
+    if not _same_subject(first.subject, second.subject):
         return _result(RelationshipType.UNRELATED, 0.98, "The facts refer to different subjects.", "subject differs")
     if canonical_text(first.predicate) != canonical_text(second.predicate):
         return _result(RelationshipType.UNRELATED, 0.95, "The facts describe different predicates.", "predicate differs")
@@ -75,6 +75,16 @@ def _context_difference(first: Any, second: Any) -> str | None:
     if first.location and second.location and canonical_text(first.location) != canonical_text(second.location):
         return "geographic"
     return None
+
+
+def _same_subject(first: str, second: str) -> bool:
+    first_words = set(canonical_text(first).split())
+    second_words = set(canonical_text(second).split())
+    if first_words == second_words:
+        return True
+    if not first_words or not second_words:
+        return False
+    return first_words <= second_words or second_words <= first_words
 
 
 def _time_key(fact: Any) -> str:

@@ -17,6 +17,7 @@ class Evidence:
     document_id: str
     page_number: int
     quote: str
+    chunk_id: str | None = None
     char_start: int | None = None
     char_end: int | None = None
 

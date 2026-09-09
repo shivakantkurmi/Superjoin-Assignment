@@ -17,16 +17,32 @@ _SCALE = {
     "b": Decimal("1000000000"),
     "crore": Decimal("10000000"),
     "cr": Decimal("10000000"),
+    "lakh": Decimal("100000"),
+    "l": Decimal("100000"),
 }
+
+# Percentage suffix — stored as-is in base units (i.e. 12.5% → Decimal("12.5"))
+_PERCENT_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*%")
 
 
 def normalize_number(raw: str, unit: str | None = None) -> Decimal | None:
-    """Return a base-unit number when a recognized scale is explicit."""
+    """Return a base-unit number when a recognized scale is explicit.
+
+    Percentages are returned as their numeric face value (12.5% → 12.5).
+    Currency and scale suffixes (crore, million, etc.) are expanded to base units.
+    """
     if not raw:
         return None
     cleaned = raw.replace(",", "").strip().lower()
+    # Handle percentages first
+    pct = _PERCENT_RE.fullmatch(cleaned.rstrip())
+    if pct:
+        try:
+            return Decimal(pct.group(1))
+        except InvalidOperation:
+            return None
     match = re.fullmatch(
-        r"(?:(?:inr|usd|eur|gbp)\s*)?(?:[₹$€£]\s*)?([-+]?\d+(?:\.\d+)?)\s*([a-z]+)?",
+        r"(?:(?:inr|usd|eur|gbp|rs\.?)\s*)?(?:[₹$€£]\s*)?([-+]?\d+(?:\.\d+)?)\s*([a-z]+)?",
         cleaned,
     )
     if not match:

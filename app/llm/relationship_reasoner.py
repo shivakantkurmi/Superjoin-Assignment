@@ -1,25 +1,46 @@
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ..models import Evidence, Fact
-from .gemini_client import GeminiClient, GeminiResponseError
+from .gemini_client import GeminiResponseError
 from ..reasoning.relationships import RelationshipResult, RelationshipType
+
+logger = logging.getLogger(__name__)
+
+
+class LLMProviderProtocol(Protocol):
+    """Structural type accepted by RelationshipReasoner — satisfied by LLMRouter, GeminiProvider, etc."""
+
+    def generate_json(self, prompt: str, response_schema: Any) -> dict[str, Any]: ...
 
 
 class RelationshipPayload(BaseModel):
     relationship_type: RelationshipType
-    confidence: float = Field(ge=0, le=1)
+    confidence: float = Field(default=0.5, ge=0, le=1)
     explanation: str = Field(min_length=1)
     factors: list[str] = Field(default_factory=list)
 
 
-class RelationshipReasoner:
-    """Use Gemini only when deterministic comparison cannot resolve a pair."""
+RELATIONSHIP_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "relationship_type": {"type": "STRING"},
+        "confidence": {"type": "NUMBER"},
+        "explanation": {"type": "STRING"},
+        "factors": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["relationship_type", "confidence", "explanation"],
+}
 
-    def __init__(self, client: GeminiClient) -> None:
+
+class RelationshipReasoner:
+    """Route ambiguous fact pairs to the LLM provider chain (Gemini → Groq fallback)."""
+
+    def __init__(self, client: LLMProviderProtocol) -> None:
         self.client = client
 
     def reason(
@@ -28,15 +49,16 @@ class RelationshipReasoner:
         second: Fact,
         evidence: tuple[Evidence | None, Evidence | None] = (None, None),
     ) -> RelationshipResult:
+        prompt = self._prompt(first, second, evidence)
         try:
-            payload = RelationshipPayload.model_validate(
-                self.client.generate_json(self._prompt(first, second, evidence), RelationshipPayload)
-            )
-        except (GeminiResponseError, ValueError) as exc:
+            data = self.client.generate_json(prompt, RELATIONSHIP_SCHEMA)
+            payload = RelationshipPayload.model_validate(data)
+        except (GeminiResponseError, ValidationError, ValueError, Exception) as exc:
+            logger.warning("llm_reasoner stage=relationship status=failed error=%s", exc)
             return RelationshipResult(
                 RelationshipType.AMBIGUOUS,
                 0.2,
-                f"Gemini could not resolve this relationship: {exc}",
+                f"LLM provider could not resolve this relationship: {exc}",
                 ("reasoning failure",),
             )
         return RelationshipResult(

@@ -1,6 +1,8 @@
 # Fact Knowledge Layer
 
-A small fact-centric prototype for extracting grounded facts from PDF documents, normalizing them, finding candidate matches, and explaining relationships between facts.
+A system that extracts meaningful facts from PDFs, links every fact to its source evidence, and identifies when facts corroborate, contradict, or can be reconciled across documents.
+
+---
 
 ## Setup and Run Instructions
 
@@ -8,8 +10,8 @@ A small fact-centric prototype for extracting grounded facts from PDF documents,
 
 - Python 3.11+
 - Node.js 18+
-- A Supabase project for persistent storage
-- A Google Gemini API key for live fact extraction and relationship reasoning
+- A Supabase project (PostgreSQL) — optional; the system falls back to in-memory storage without it
+- A Google Gemini API key — optional; the pipeline runs locally without it; only ambiguous fact pairs use the LLM
 
 ### Backend
 
@@ -20,23 +22,37 @@ pip install -e ".[test]"
 Copy-Item .env.example .env
 ```
 
-Set these values in `.env`:
+Edit `.env` and fill in your keys:
 
 ```env
-GEMINI_API_KEY=your-key
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_API_KEY=your-gemini-key
+GEMINI_MODEL=gemini-3.7-flash
+GEMINI_MODELS=gemini-3.7-flash,gemini-3.6-flash
+
+GROQ_API_KEY=your-groq-key
+GROQ_MODEL=openai/gpt-oss-20b
+
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-key
-SUPABASE_DB_URL=postgresql://...
+SUPABASE_KEY=your-anon-key
+SUPABASE_DB_URL=postgresql://postgres:password@db.your-project.supabase.co:5432/postgres
+
+FRONTEND_ORIGINS=http://localhost:5173
 ```
 
-Apply `supabase/migrations/0001_initial_schema.sql` in the Supabase SQL editor. Start the API with:
+If using Supabase, run the migration files in the SQL editor in order:
+
+1. `supabase/migrations/0001_initial_schema.sql`
+2. `supabase/migrations/0002_add_document_counts.sql`
+3. `supabase/migrations/0003_fix_fact_column_types.sql`
+4. `supabase/migrations/0004_add_chunk_id_to_evidence.sql`
+
+Start the API (`.env` is automatically loaded via `python-dotenv`):
 
 ```powershell
 uvicorn app.main:app --reload
 ```
 
-The API is available at `http://localhost:8000`; interactive documentation is at `http://localhost:8000/docs`.
+API: `http://localhost:8000` · Docs: `http://localhost:8000/docs`
 
 ### Frontend
 
@@ -46,92 +62,91 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Use the upload control to send a new PDF to `POST /documents/upload`. The starter PDFs are intentionally local-only and are ignored by Git.
+Open `http://localhost:5173`, then upload a PDF using the **+ UPLOAD PDF** button.
+
+### Tests
+
+```powershell
+python -m pytest tests/ -v
+```
+
+All 35 tests run without API keys or a database connection.
+
+---
 
 ## Video Demo
 
+Video demo link: [Watch the Loom demo](https://www.loom.com/share/fab93a09ef114d94a176797e051ea7e2)
 
+
+---
 
 ## Approach
 
-The system is fact-centric rather than a generic PDF chatbot:
+### Architecture
 
 ```mermaid
 flowchart TD
-	A[PDF upload] --> B[PyMuPDF page extraction]
-	B --> C[Page-aware chunks]
-	C --> D[Gemini 3.5 Flash fact extraction]
-	D --> E[Evidence verification]
-	E --> F[Deterministic normalization]
-	F --> G[MiniLM embeddings]
-	G --> H[FAISS Top-K retrieval]
-	H --> I[Targeted fact and evidence context]
-	I --> J[Deterministic context checks]
-	J --> K[Gemini relationship reasoning when ambiguous]
-	K --> L[Supabase PostgreSQL]
-	L --> M[FastAPI and React UI]
+    A[PDF Upload] --> B[PyMuPDF\npage-aware extraction]
+    B --> C[Page-aware Chunking\nsentence-boundary aligned]
+    C --> D[Text Normalization\nNFKC · hyphen · header dedup]
+    D --> E[Local Candidate Extraction\nDeterministicFactExtractor\nregex + NLP · NO LLM]
+    E --> F[Candidate Facts\nsubject · predicate · value\nunit · period · scope · quote]
+    F --> G[Deterministic Normalization\nnumbers · scales · currencies\npercentages · periods · text]
+    G --> H[MiniLM Embeddings\nall-MiniLM-L6-v2 · local]
+    H --> I[FAISS Top-K Retrieval\nNOT the source of truth]
+    I --> J[Candidate Fact Pairs]
+    J --> K[Deterministic Comparison\nsubject · predicate · time\nscope · geo · value checks]
+    K --> |CLEAR| L[Final Relationship]
+    K --> |UNCLEAR| M[LLM Router\nambiguous pairs only]
+    M --> N[Groq\nprimary]
+    M --> O[Gemini\nfallback]
+    N --> P[Validation\nPydantic schema +\nevidence grounding]
+    O --> P
+    L --> Q[Supabase PostgreSQL\nsource of truth]
+    P --> Q
+    Q --> R[FastAPI]
+    R --> S[React UI]
 ```
 
-PyMuPDF owns document reading and page boundaries. Gemini is reserved for semantic work: dynamic fact extraction, ambiguous interpretation, relationship reasoning, and grounded explanations. Numeric normalization, period parsing, quote verification, FAISS search, and validation stay deterministic.
+Fact extraction happens locally using regex and NLP patterns — no LLM is involved in bulk PDF processing. Groq is tried first for the small number of fact pairs where deterministic comparison is genuinely uncertain, with Gemini as the fallback. If both LLM providers are unavailable, the relationship is marked `AMBIGUOUS` and processing continues.
 
-Facts use a flexible subject/predicate/value shape instead of a fixed list of metrics. Each fact carries source document, page, quote, offsets when available, confidence, qualifiers, time, scope, and status. A quote that cannot be found on its source page is marked `EVIDENCE_FAILED`.
+### Key Decisions
 
-Embeddings use `sentence-transformers/all-MiniLM-L6-v2`. FAISS retrieves likely candidates; it does not decide whether facts contradict. Candidate pairs are compared with time, scope, geography, normalized values, and qualifiers before Gemini is asked to resolve ambiguity.
+- **Local-first extraction** — `DeterministicFactExtractor` identifies numerical values, percentages, currencies, fiscal periods, units, and semantic predicates with regex and NLP patterns. High recall is prioritized so borderline sentences are kept for the comparison stage to evaluate.
+- **Deterministic normalization** — currency expressions (`₹12.5 crore`, `$4.2 billion`, `12.5%`) are converted to canonical `Decimal` values so exact numeric comparison is possible without an LLM.
+- **MiniLM + FAISS** — `all-MiniLM-L6-v2` embeds each fact locally. FAISS retrieves semantically similar candidates without comparing every fact against every other fact.
+- **Deterministic comparison first** — most relationships (corroboration, contradiction, contextual reconciliation) are resolved without an LLM using subject, predicate, time period, scope, geography, and normalized value checks.
+- **LLM Router** — `LLMRouter` tries Groq first and falls back to Gemini automatically for the small number of ambiguous pairs. Both providers implement the same interface so the pipeline does not depend on either SDK directly.
+- **Evidence grounding** — every fact carries an exact source quote, readable document filename, page number, chunk ID, and character offsets. Quotes that cannot be located on their source page are marked `EVIDENCE_FAILED` rather than silently accepted.
+- **Cross-document relationships** — matching subject and predicate facts are compared across documents even when embedding similarity misses the candidate, producing corroboration, contradiction, reconciliation, or ambiguity results with both source facts attached.
+- **Supabase as source of truth** — documents, pages, chunks, facts, evidence, and relationships are stored in PostgreSQL. FAISS is a replaceable retrieval index that can be rebuilt from stored facts.
+- **Dynamic schema** — facts use a flexible `subject / predicate / value / qualifiers` shape. New predicates are extracted without adding hard-coded metric types, so the system generalizes to new documents.
 
-Processing is incremental in design: facts from a new document are normalized, added to the vector index, and compared with retrieved existing candidates. Supabase is the source of truth; FAISS is a replaceable retrieval index.
+### AI Tools Used
 
-## Architecture
+- Google Gemini (`gemini-3.7-flash`, with `gemini-3.6-flash` fallback) — relationship reasoning fallback
+- Groq (`openai/gpt-oss-20b`) — primary relationship reasoning provider
+- `sentence-transformers/all-MiniLM-L6-v2` — local semantic embeddings
+- GitHub Copilot — initial scaffolding; architecture and all logic reviewed and completed manually
 
-The main code boundaries are:
-
-- `app/ingestion.py`: page-aware PDF extraction and evidence verification
-- `app/llm/`: Google GenAI client, fact extractor, and relationship reasoner
-- `app/normalization.py`: deterministic numeric, text, period, and fact normalization
-- `app/retrieval/`: MiniLM embedding and FAISS candidate retrieval
-- `app/reasoning/`: deterministic relationship checks
-- `app/pipeline.py`: extraction-to-comparison orchestration
-- `app/db/`: Supabase repository and persistence writer
-- `app/main.py`: FastAPI upload and read endpoints
-- `frontend/`: React review interface
-
-The core of the system is grounded fact extraction and contextual comparison. Retrieval and visualization support that process; they are not substitutes for it.
-
-## Important Decisions and Trade-offs
-
-- **Supabase instead of SQLite:** the assignment requires PostgreSQL-backed shared persistence and Supabase provides a hosted deployment path.
-- **FAISS:** it is lightweight and makes Top-K candidate retrieval explicit. It can later be replaced by Supabase pgvector behind `VectorIndex`.
-- **MiniLM:** `all-MiniLM-L6-v2` is small enough for local development and captures more context than embedding only a number.
-- **Targeted RAG:** only candidate facts, evidence quotes, pages, and nearby context are supplied to reasoning. The whole PDF is not repeatedly sent to an LLM.
-- **Deterministic normalization:** arithmetic and evidence checks are more reproducible in code than in a model response.
-- **Gemini reasoning:** semantic interpretation is useful when periods, scope, measurement definitions, or wording are ambiguous.
-- **Evidence verification:** it prevents unsupported model output from being presented as a grounded fact.
-- **Dynamic schema:** new predicates can be extracted without adding a new hard-coded metric type.
-- **No all-pairs comparison:** FAISS reduces unnecessary comparisons as the fact collection grows.
-
-The graph/relationship visualization is only a presentation layer. The core value is grounded fact extraction, normalization, comparison and reasoning.
+---
 
 ## Limitations and Next Steps
 
-- OCR fallback is not implemented; image-only pages are retained and reported as likely scanned.
-- Tables, charts, reading order, and complex multi-column layouts can reduce extraction quality.
-- Entity resolution is conservative and does not solve aliases across every company or organization.
-- Temporal reasoning currently handles common labels and explicit context differences, not full interval algebra.
-- FAISS persistence is implemented as a local index format, but rebuilding from Supabase should be added for production recovery.
-- Live Supabase writes require credentials and migration setup; automated tests use repository doubles.
-- Live Gemini calls require credentials and are intentionally not part of the test suite.
-- Multilingual PDFs, currency conversion, calculated metrics, and advanced table extraction need further work.
+- **OCR** — image-only or scanned pages are detected and flagged but not processed. Integrating Tesseract or a hosted OCR API would fix this.
+- **Tables** — PDF tables are extracted as flat text, which reduces structured numeric extraction quality. A dedicated table parser (pdfplumber, Camelot) would help significantly.
+- **Entity resolution** — "ABC Ltd", "ABC Limited", and "ABC" are treated as different subjects. A lightweight alias resolver would improve cross-document corroboration.
+- **FAISS persistence** — the index is rebuilt in memory on each restart. Persisting and reloading it would make incremental processing truly seamless.
+- **Frontend pagination** — all facts and relationships load at once; pagination is needed for large document collections.
 
-Next steps include OCR and table extraction, hybrid lexical plus semantic retrieval, FAISS rebuild tooling, pgvector, human review workflows, stronger entity resolution, and richer temporal reasoning.
+Next steps: OCR, table extraction, entity resolution, FAISS persistence, incremental processing without a restart.
+
+---
 
 ## Additional Notes
 
-- LLM provider: Google Gemini API
-- LLM model: `gemini-3.5-flash`
-- Embedding model: `sentence-transformers/all-MiniLM-L6-v2`
-- Vector search: FAISS
-- Database: Supabase PostgreSQL
-- PDF extraction: PyMuPDF
-- API: FastAPI
-- UI: React and Vite
-
-
+- The starter PDFs are not committed to the repository (they are gitignored).
+- No credentials are stored in the repository; all keys are loaded from `.env` at runtime.
+- The system works without Supabase (in-memory fallback) and without LLM keys (ambiguous pairs are marked `AMBIGUOUS`) so evaluators can run it with minimal setup.
+- The `MemoryStore` in-memory fallback loses data on restart; configure Supabase for a durable deployment.

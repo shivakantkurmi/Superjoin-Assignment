@@ -10,16 +10,21 @@ class ExtractionError(RuntimeError):
     """Raised when a PDF cannot be read or has no useful text."""
 
 
-def extract_pages(path: str | Path, document_id: str) -> list[Page]:
+def extract_pages(source: str | Path | bytes, document_id: str) -> list[Page]:
     """Extract text page-by-page and preserve the source page boundaries."""
     try:
-        import fitz
-    except ImportError as exc:  # pragma: no cover - exercised in setup failures
-        raise ExtractionError("PyMuPDF is required for PDF extraction") from exc
+        import pymupdf as fitz
+    except ImportError:
+        try:
+            import fitz
+        except ImportError as exc:  # pragma: no cover - exercised in setup failures
+            raise ExtractionError("PyMuPDF is required for PDF extraction") from exc
 
-    pdf_path = Path(path)
     try:
-        document = fitz.open(pdf_path)
+        if isinstance(source, (str, Path)):
+            document = fitz.open(Path(source))
+        else:
+            document = fitz.open(stream=source, filetype="pdf")
     except Exception as exc:  # pragma: no cover - depends on malformed PDFs
         raise ExtractionError(f"Could not open PDF: {exc}") from exc
 

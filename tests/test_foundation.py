@@ -33,3 +33,15 @@ def test_evidence_verification_returns_offsets():
 def test_evidence_verification_rejects_ungrounded_quote():
     page = Page("doc-1", 2, "Revenue for FY2024 was INR 125 crore.")
     assert verify_evidence(page, "INR 999 crore") == (False, None, None)
+
+
+def test_lakh_scale_normalizes_correctly():
+    """1 lakh = 100,000"""
+    assert normalize_number("5 lakh") == Decimal("500000")
+    assert normalize_number("10.5 lakh") == Decimal("1050000")
+
+
+def test_percentage_normalized_to_face_value():
+    """Percentages should return the numeric value (e.g. 12.5% → 12.5)."""
+    assert normalize_number("12.5%") == Decimal("12.5")
+    assert normalize_number("100%") == Decimal("100")
